@@ -11,10 +11,10 @@ from twilio.rest import Client
 conn = sqlite3.connect("kisumu_hospital.db", check_same_thread=False)
 c = conn.cursor()
 
-# Tables
+# Create tables if not exist
 c.execute('''CREATE TABLE IF NOT EXISTS users
              (id INTEGER PRIMARY KEY AUTOINCREMENT,
-              username TEXT,
+              username TEXT UNIQUE,
               password_hash TEXT,
               role TEXT,
               department TEXT)''')
@@ -32,24 +32,47 @@ c.execute('''CREATE TABLE IF NOT EXISTS appointments
               clinic_id INTEGER)''')
 conn.commit()
 
-# --- Helper: Hash passwords ---
+# --- Helper: Hash password ---
 def hash_password(password):
-    return hashlib.sha256(str.encode(password)).hexdigest()
+    return hashlib.sha256(password.encode()).hexdigest()
 
-# --- Authentication ---
-usernames = [row[0] for row in c.execute("SELECT username FROM users").fetchall()]
-passwords = [row[0] for row in c.execute("SELECT password_hash FROM users").fetchall()]
-roles = [row[0] for row in c.execute("SELECT role FROM users").fetchall()]
+# --- Ensure admin exists ---
+admin_check = c.execute("SELECT * FROM users WHERE username=?", ("admin",)).fetchone()
+if not admin_check:
+    c.execute("INSERT INTO users (username, password_hash, role, department) VALUES (?, ?, ?, ?)",
+              ("admin", hash_password("admin123"), "admin", "ALL"))
+    conn.commit()
 
+# --- Authentication Setup ---
+users = c.execute("SELECT username, password_hash, role FROM users").fetchall()
 credentials = {"usernames": {}}
-for i, u in enumerate(usernames):
-    credentials["usernames"][u] = {"password": passwords[i], "role": roles[i]}
+for u, p, r in users:
+    credentials["usernames"][u] = {"password": p, "role": r}
 
 authenticator = stauth.Authenticate(
     credentials, "kisumu_app", "abcdef", cookie_expiry_days=1
 )
 
 name, authentication_status, username = authenticator.login("Login", "main")
+
+# --- Twilio Setup from Secrets ---
+account_sid = st.secrets.get("TWILIO_ACCOUNT_SID")
+auth_token = st.secrets.get("TWILIO_AUTH_TOKEN")
+twilio_number = st.secrets.get("TWILIO_PHONE")
+
+def send_sms(phone, msg):
+    if account_sid and auth_token and twilio_number:
+        try:
+            client = Client(account_sid, auth_token)
+            client.messages.create(
+                body=msg,
+                from_=twilio_number,
+                to=f"whatsapp:+{phone}" if "whatsapp" in twilio_number else f"+{phone}"
+            )
+        except Exception as e:
+            st.warning(f"⚠️ SMS/WhatsApp not sent: {e}")
+    else:
+        st.info("ℹ️ Twilio not configured. Skipping SMS.")
 
 # --- Main App ---
 if authentication_status:
@@ -60,6 +83,7 @@ if authentication_status:
 
     st.title("🏥 Kisumu County Referral Hospital - Appointment Booking")
 
+    # Receptionist Booking Page
     if role == "receptionist":
         st.subheader("📌 Book Appointment")
         with st.form("booking_form"):
@@ -69,7 +93,7 @@ if authentication_status:
             doctor = st.text_input("Doctor (optional)")
             date_ = st.date_input("Preferred Date", min_value=date.today())
             submit = st.form_submit_button("Book Appointment")
-            if submit:
+            if submit and patient_name and phone:
                 created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 c.execute("""INSERT INTO appointments 
                              (patient_name, phone, department, doctor, date, status, created_at, updated_at, clinic_id) 
@@ -88,30 +112,23 @@ if authentication_status:
                 st.write(f"📌 {row['patient_name']} | {row['department']} | {row['date']} | Status: {row['status']}")
                 col1, col2 = st.columns(2)
                 with col1:
-                    if st.button(f"Confirm {row['id']}", key=f"c{row['id']}"):
+                    if st.button(f"Confirm {row['id']}", key=f"confirm{row['id']}"):
                         c.execute("UPDATE appointments SET status=?, updated_at=? WHERE id=?",
                                   ("confirmed", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), row['id']))
                         conn.commit()
-                        # Send SMS/WhatsApp (Twilio example)
-                        try:
-                            client = Client("TWILIO_SID", "TWILIO_AUTH")
-                            message = client.messages.create(
-                                body=f"Your appointment at Kisumu Hospital is confirmed for {row['date']}.",
-                                from_="whatsapp:+14155238886",
-                                to=f"whatsapp:+{row['phone']}"
-                            )
-                        except:
-                            st.warning("⚠️ SMS/WhatsApp not sent (check Twilio setup).")
+                        send_sms(row['phone'], f"Your appointment at Kisumu Hospital is confirmed for {row['date']}.")
+                        st.success(f"✅ Confirmed appointment {row['id']}")
                 with col2:
-                    if st.button(f"Cancel {row['id']}", key=f"x{row['id']}"):
+                    if st.button(f"Cancel {row['id']}", key=f"cancel{row['id']}"):
                         c.execute("UPDATE appointments SET status=?, updated_at=? WHERE id=?",
                                   ("cancelled", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), row['id']))
                         conn.commit()
-
+                        send_sms(row['phone'], f"Your appointment at Kisumu Hospital has been cancelled.")
+                        st.warning(f"❌ Cancelled appointment {row['id']}")
         else:
             st.info("No appointments yet.")
 
-    # Analytics
+    # Analytics Dashboard
     if role == "admin":
         st.subheader("📊 Analytics Dashboard")
         df = pd.read_sql("SELECT * FROM appointments", conn)
@@ -122,6 +139,11 @@ if authentication_status:
             st.plotly_chart(fig2)
         else:
             st.info("No data for analytics yet.")
+
+elif authentication_status == False:
+    st.error("Username/Password is incorrect")
+else:
+    st.warning("Please login to continue.")
 
 elif authentication_status == False:
     st.error("Username/Password is incorrect")
