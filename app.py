@@ -42,7 +42,7 @@ if not admin_check:
               ("admin", hash_password("admin123"), "admin", "ALL"))
     conn.commit()
 
-# --- Manual Authentication ---
+# --- Session State for Auth ---
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
     st.session_state["username"] = None
@@ -78,7 +78,6 @@ twilio_number = st.secrets.get("TWILIO_PHONE")
 def send_sms(phone, msg):
     if account_sid and auth_token and twilio_number:
         try:
-            from twilio.rest import Client
             client = Client(account_sid, auth_token)
             client.messages.create(
                 body=msg,
@@ -90,36 +89,40 @@ def send_sms(phone, msg):
     else:
         st.info("ℹ️ Twilio not configured. Skipping SMS.")
 
-# --- Main App ---
-if not st.session_state["logged_in"]:
-    manual_login()
-else:
-    manual_logout()
+# --- App Layout ---
+st.title("🏥 Kisumu County Referral Hospital")
 
-    role = st.session_state["role"]
-    st.title("🏥 Kisumu County Referral Hospital - Appointment Booking")
+menu = ["Book Appointment", "Staff Login"]
+choice = st.sidebar.selectbox("Menu", menu)
 
-    # Receptionist Booking Page
-    if role == "receptionist":
-        st.subheader("📌 Book Appointment")
-        with st.form("booking_form"):
-            patient_name = st.text_input("Patient Name")
-            phone = st.text_input("Phone Number")
-            department = st.selectbox("Department", ["OPD", "MCH/FP", "Dental", "Surgery", "Orthopedics", "Eye"])
-            doctor = st.text_input("Doctor (optional)")
-            date_ = st.date_input("Preferred Date", min_value=date.today())
-            submit = st.form_submit_button("Book Appointment")
-            if submit and patient_name and phone:
-                created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                c.execute("""INSERT INTO appointments 
-                             (patient_name, phone, department, doctor, date, status, created_at, updated_at, clinic_id) 
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                          (patient_name, phone, department, doctor, str(date_), "pending", created_at, created_at, 1))
-                conn.commit()
-                st.success(f"✅ Appointment booked for {patient_name} on {date_}")
+# --- Patient Side: Booking ---
+if choice == "Book Appointment":
+    st.subheader("📌 Patient Appointment Booking")
+    with st.form("booking_form"):
+        patient_name = st.text_input("Patient Name")
+        phone = st.text_input("Phone Number")
+        department = st.selectbox("Department", ["OPD", "MCH/FP", "Dental", "Surgery", "Orthopedics", "Eye"])
+        doctor = st.text_input("Doctor (optional)")
+        date_ = st.date_input("Preferred Date", min_value=date.today())
+        submit = st.form_submit_button("Book Appointment")
+        if submit and patient_name and phone:
+            created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            c.execute("""INSERT INTO appointments 
+                         (patient_name, phone, department, doctor, date, status, created_at, updated_at, clinic_id) 
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                      (patient_name, phone, department, doctor, str(date_), "pending", created_at, created_at, 1))
+            conn.commit()
+            st.success(f"✅ Appointment booked for {patient_name} on {date_}")
+            send_sms(phone, f"Hello {patient_name}, your appointment request for {date_} has been received and is pending confirmation.")
 
-    # Staff/Admin Dashboard
-    if role in ["doctor", "admin", "receptionist"]:
+# --- Staff Side: Queue & Analytics ---
+elif choice == "Staff Login":
+    if not st.session_state["logged_in"]:
+        manual_login()
+    else:
+        manual_logout()
+        role = st.session_state["role"]
+
         st.subheader("📋 Manage Appointments")
         df = pd.read_sql("SELECT * FROM appointments", conn)
 
@@ -144,14 +147,13 @@ else:
         else:
             st.info("No appointments yet.")
 
-    # Analytics Dashboard
-    if role == "admin":
-        st.subheader("📊 Analytics Dashboard")
-        df = pd.read_sql("SELECT * FROM appointments", conn)
-        if not df.empty:
-            fig = px.histogram(df, x="department", color="status", title="Appointments by Department")
-            st.plotly_chart(fig)
-            fig2 = px.histogram(df, x="date", color="status", title="Appointments over Time")
-            st.plotly_chart(fig2)
-        else:
-            st.info("No data for analytics yet.")
+        # Analytics only for admin
+        if role == "admin":
+            st.subheader("📊 Analytics Dashboard")
+            if not df.empty:
+                fig = px.histogram(df, x="department", color="status", title="Appointments by Department")
+                st.plotly_chart(fig)
+                fig2 = px.histogram(df, x="date", color="status", title="Appointments over Time")
+                st.plotly_chart(fig2)
+            else:
+                st.info("No data for analytics yet.")
