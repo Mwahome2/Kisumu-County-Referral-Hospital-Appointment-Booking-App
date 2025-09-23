@@ -1,7 +1,5 @@
-streamlit
-sqlite3
-pandas 
-datetime 
-plotly.express
-hashlib
-twilio.rest
+streamlit==1.37.0
+pandas==2.2.2
+plotly==5.22.0
+streamlit-authenticator==0.3.2
+twilio==9.0.5
