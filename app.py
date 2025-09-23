@@ -12,7 +12,7 @@ from twilio.rest import Client
 # ==========================
 DB_PATH = "kisumu_hospital.db"
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-conn.row_factory = sqlite3.Row  # <-- allows dictionary-style access
+conn.row_factory = sqlite3.Row  # allows dictionary-style access
 c = conn.cursor()
 
 # --- Base tables ---
@@ -31,6 +31,7 @@ c.execute('''CREATE TABLE IF NOT EXISTS appointments
               doctor TEXT,
               date TEXT,
               status TEXT,
+              stage TEXT DEFAULT 'pending',
               created_at TEXT,
               updated_at TEXT,
               clinic_id INTEGER,
@@ -53,6 +54,7 @@ ensure_column_exists("appointments", "notification_sent", "INTEGER DEFAULT 0")
 ensure_column_exists("appointments", "insurance_verified", "INTEGER DEFAULT 0")
 ensure_column_exists("appointments", "clinic_id", "INTEGER DEFAULT 1")
 ensure_column_exists("appointments", "booking_ref", "TEXT")
+ensure_column_exists("appointments", "stage", "TEXT DEFAULT 'pending'")
 
 # ==========================
 # --- MULTI-LANGUAGE SUPPORT ---
@@ -78,7 +80,10 @@ languages = {
         "status_confirmed": "✅ Status: Confirmed",
         "status_cancelled": "❌ Status: Cancelled",
         "staff_manage": "📋 Manage Appointments (Queue)",
-        "analytics": "📊 Analytics Dashboard"
+        "analytics": "📊 Analytics Dashboard",
+        "stage_label": "Stage",
+        "update_stage": "Update Stage",
+        "stages": ["pending", "confirmed", "in consultation", "done"]
     },
     "sw": {
         "title": "🏥 Hospitali Kuu ya Rufaa ya Kaunti ya Kisumu",
@@ -100,11 +105,13 @@ languages = {
         "status_confirmed": "✅ Hali: Imethibitishwa",
         "status_cancelled": "❌ Hali: Imefutwa",
         "staff_manage": "📋 Dhibiti Miadi (Orodha ya Wateja)",
-        "analytics": "📊 Dashibodi ya Takwimu"
+        "analytics": "📊 Dashibodi ya Takwimu",
+        "stage_label": "Kipindi cha huduma",
+        "update_stage": "Sasisha Kipindi",
+        "stages": ["pending", "confirmed", "in consultation", "done"]
     }
 }
 
-# Sidebar language selector
 st.sidebar.title("🌐 Language / Lugha")
 st.session_state["language"] = st.sidebar.selectbox(
     "Choose Language / Chagua Lugha", ["en", "sw"], index=0
@@ -193,9 +200,9 @@ def manual_logout():
 def insert_appointment(patient_name, phone, department, doctor, appt_date, clinic_id=1):
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     c.execute("""INSERT INTO appointments 
-                 (patient_name, phone, department, doctor, date, status, created_at, updated_at, clinic_id) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-              (patient_name, phone, department, doctor, str(appt_date), "pending", created_at, created_at, clinic_id))
+                 (patient_name, phone, department, doctor, date, status, stage, created_at, updated_at, clinic_id) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+              (patient_name, phone, department, doctor, str(appt_date), "pending", "pending", created_at, created_at, clinic_id))
     conn.commit()
     appt_id = c.lastrowid
     ref = generate_booking_ref(appt_id)
@@ -217,7 +224,7 @@ def insert_appointment(patient_name, phone, department, doctor, appt_date, clini
 st.title(t["title"])
 menu_choice = st.sidebar.selectbox("Menu", t["menu"])
 
-# --- PATIENT SIDE: BOOKING ---
+# --- PATIENT BOOKING ---
 if menu_choice == t["menu"][0]:
     st.subheader(t["patient_booking"])
     with st.form("booking_form"):
@@ -236,7 +243,7 @@ if menu_choice == t["menu"][0]:
                 st.info(t["booking_ref"].format(ref=ref))
                 st.info(t["telemedicine"].format(link=tele_link))
 
-# --- PATIENT SIDE: STATUS ---
+# --- PATIENT STATUS CHECK ---
 elif menu_choice == t["menu"][1]:
     st.subheader(t["check_status"])
     query = st.text_input(t["enter_ref_phone"])
@@ -253,4 +260,24 @@ elif menu_choice == t["menu"][1]:
                 st.info(status_text.get(row["status"], row["status"]))
             else:
                 st.error(t["no_appt_found"])
+
+# --- STAFF / ADMIN ---
+elif menu_choice == t["menu"][2]:
+    if not st.session_state["logged_in"]:
+        manual_login()
+    else:
+        manual_logout()
+        df = pd.read_sql("SELECT * FROM appointments ORDER BY created_at DESC", conn)
+        st.subheader(t["staff_manage"])
+        if not df.empty:
+            for i, row in df.iterrows():
+                st.write(f"📌 {row['patient_name']} | {row['department']} | {row['date']} | Status: {row['status']} | Stage: {row['stage']} | Ref: {row['booking_ref']}")
+                cols = st.columns([1,1,1])
+                with cols[0]:
+                    if st.button("Confirm", key=f"confirm{row['id']}"):
+                        c.execute("UPDATE appointments SET status=?, stage=?, updated_at=? WHERE id=?",
+                                  ("confirmed", "confirmed", datetime.now().strftime('%Y-%m-%d %H:%M:%S'), row['id']))
+                        conn.commit()
+                        send_notification(row['phone'], f"Your appointment ({row['booking_ref']}) is confirmed for {row['date']}")
+                        st.success
 
