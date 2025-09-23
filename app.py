@@ -279,5 +279,39 @@ elif menu_choice == t["menu"][2]:
                                   ("confirmed", "confirmed", datetime.now().strftime('%Y-%m-%d %H:%M:%S'), row['id']))
                         conn.commit()
                         send_notification(row['phone'], f"Your appointment ({row['booking_ref']}) is confirmed for {row['date']}")
-                        st.success
+                        st.success(f"✅ Confirmed appointment {row['id']}")
+                        st.experimental_rerun()
+
+                with cols[1]:
+                    if st.button("Cancel", key=f"cancel{row['id']}"):
+                        c.execute("UPDATE appointments SET status=?, stage=?, updated_at=? WHERE id=?",
+                                  ("cancelled", "cancelled", datetime.now().strftime('%Y-%m-%d %H:%M:%S'), row['id']))
+                        conn.commit()
+                        send_notification(row['phone'], f"Your appointment ({row['booking_ref']}) has been cancelled.")
+                        st.warning(f"❌ Cancelled appointment {row['id']}")
+                        st.experimental_rerun()
+
+                with cols[2]:
+                    new_stage = st.selectbox(t["update_stage"], t["stages"], index=t["stages"].index(row['stage']), key=f"stage{row['id']}")
+                    if st.button(f"Update Stage", key=f"updatestage{row['id']}"):
+                        c.execute("UPDATE appointments SET stage=?, updated_at=? WHERE id=?",
+                                  (new_stage, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), row['id']))
+                        conn.commit()
+                        st.success(f"✅ Updated stage for {row['patient_name']} to {new_stage}")
+                        st.experimental_rerun()
+
+        else:
+            st.info("No appointments yet.")
+
+        # Analytics for admin
+        if st.session_state["role"] == "admin":
+            st.subheader(t["analytics"])
+            if not df.empty:
+                fig = px.histogram(df, x="department", color="status", title="Appointments by Department")
+                st.plotly_chart(fig)
+                fig2 = px.histogram(df, x="date", color="status", title="Appointments over Time")
+                st.plotly_chart(fig2)
+            else:
+                st.info("No data for analytics yet.")
+
 
