@@ -144,8 +144,3 @@ elif authentication_status == False:
     st.error("Username/Password is incorrect")
 else:
     st.warning("Please login to continue.")
-
-elif authentication_status == False:
-    st.error("Username/Password is incorrect")
-else:
-    st.warning("Please login to continue.")
