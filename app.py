@@ -3,7 +3,6 @@ import sqlite3
 import pandas as pd
 from datetime import datetime, date
 import plotly.express as px
-import streamlit_authenticator as stauth
 import hashlib
 from twilio.rest import Client
 
@@ -43,20 +42,33 @@ if not admin_check:
               ("admin", hash_password("admin123"), "admin", "ALL"))
     conn.commit()
 
-# --- Authentication Setup ---
-users = c.execute("SELECT username, password_hash, role FROM users").fetchall()
-credentials = {"usernames": {}}
-for u, p, r in users:
-    credentials["usernames"][u] = {"password": p, "role": r}
+# --- Manual Authentication ---
+if "logged_in" not in st.session_state:
+    st.session_state["logged_in"] = False
+    st.session_state["username"] = None
+    st.session_state["role"] = None
 
-authenticator = stauth.Authenticate(
-    credentials, "kisumu_app", "abcdef", cookie_expiry_days=1
-)
+def manual_login():
+    st.subheader("🔑 Staff Login")
+    uname = st.text_input("Username")
+    pwd = st.text_input("Password", type="password")
+    if st.button("Login"):
+        hashed = hash_password(pwd)
+        row = c.execute("SELECT role FROM users WHERE username=? AND password_hash=?", (uname, hashed)).fetchone()
+        if row:
+            st.session_state["logged_in"] = True
+            st.session_state["username"] = uname
+            st.session_state["role"] = row[0]
+            st.success(f"✅ Logged in as {uname} ({row[0]})")
+        else:
+            st.error("Username/Password is incorrect")
 
-name, authentication_status, username = authenticator.login(
-    fields={'Form name': 'Login'},
-    location='main'
-)
+def manual_logout():
+    if st.sidebar.button("Logout"):
+        st.session_state["logged_in"] = False
+        st.session_state["username"] = None
+        st.session_state["role"] = None
+        st.experimental_rerun()
 
 # --- Twilio Setup from Secrets ---
 account_sid = st.secrets.get("TWILIO_ACCOUNT_SID")
@@ -66,6 +78,7 @@ twilio_number = st.secrets.get("TWILIO_PHONE")
 def send_sms(phone, msg):
     if account_sid and auth_token and twilio_number:
         try:
+            from twilio.rest import Client
             client = Client(account_sid, auth_token)
             client.messages.create(
                 body=msg,
@@ -78,12 +91,12 @@ def send_sms(phone, msg):
         st.info("ℹ️ Twilio not configured. Skipping SMS.")
 
 # --- Main App ---
-if authentication_status:
+if not st.session_state["logged_in"]:
+    manual_login()
+else:
+    manual_logout()
 
-    authenticator.logout("Logout", "sidebar")
-
-    role = c.execute("SELECT role FROM users WHERE username=?", (username,)).fetchone()[0]
-
+    role = st.session_state["role"]
     st.title("🏥 Kisumu County Referral Hospital - Appointment Booking")
 
     # Receptionist Booking Page
@@ -142,8 +155,3 @@ if authentication_status:
             st.plotly_chart(fig2)
         else:
             st.info("No data for analytics yet.")
-
-elif authentication_status == False:
-    st.error("Username/Password is incorrect")
-else:
-    st.warning("Please login to continue.")
