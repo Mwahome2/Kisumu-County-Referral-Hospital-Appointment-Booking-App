@@ -74,7 +74,7 @@ def manual_login():
             st.session_state["username"] = uname
             st.session_state["role"] = row[0]
             st.success(f"✅ Logged in as {uname} ({row[0]})")
-            st.experimental_rerun()
+            st.rerun()   # fixed
         else:
             st.error("Username/Password is incorrect")
 
@@ -83,7 +83,7 @@ def manual_logout():
         st.session_state["logged_in"] = False
         st.session_state["username"] = None
         st.session_state["role"] = None
-        st.experimental_rerun()
+        st.rerun()   # fixed
 
 # --- Twilio Setup (Streamlit Secrets or environment fallback) ---
 try:
@@ -100,17 +100,14 @@ def send_sms(phone, msg):
     if account_sid and auth_token and twilio_number:
         try:
             client = Client(account_sid, auth_token)
-            # if twilio_number includes 'whatsapp:' we will send via WhatsApp format
             if "whatsapp" in str(twilio_number).lower():
                 client.messages.create(body=msg, from_=twilio_number, to=f"whatsapp:+{phone}")
             else:
                 client.messages.create(body=msg, from_=twilio_number, to=f"+{phone}")
-            # push success message (non-blocking)
             st.success("📩 Notification sent successfully!")
         except Exception as e:
             st.warning(f"⚠️ SMS/WhatsApp not sent: {e}")
     else:
-        # friendly simulated feedback so patients see confirmation even without Twilio
         st.info(f"ℹ️ Twilio not configured. Simulated notification:\nTo: {phone}\nMessage: {msg}")
 
 # --- Utilities ---
@@ -119,7 +116,6 @@ def generate_booking_ref(appt_id):
 
 def insert_appointment(patient_name, phone, department, doctor, appt_date, clinic_id=1):
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    # Use explicit column names to match schema
     c.execute("""INSERT INTO appointments 
                  (patient_name, phone, department, doctor, date, status, created_at, updated_at, clinic_id) 
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -127,7 +123,6 @@ def insert_appointment(patient_name, phone, department, doctor, appt_date, clini
     conn.commit()
     appt_id = c.lastrowid
     ref = generate_booking_ref(appt_id)
-    # store booking_ref
     c.execute("UPDATE appointments SET booking_ref=? WHERE id=?", (ref, appt_id))
     conn.commit()
     return appt_id, ref
@@ -158,7 +153,6 @@ if choice == "Book Appointment":
                 appt_id, ref = insert_appointment(patient_name.strip(), phone.strip(), department, doctor.strip(), date_)
                 st.success(f"✅ Appointment booked for {patient_name} on {date_}")
                 st.info(f"📌 Your Booking Reference: **{ref}**")
-                # send confirmation (real or simulated)
                 send_sms(phone.strip(), f"Hello {patient_name}, your appointment for {date_} is received. Reference: {ref}")
 
 # --- Patient Side: Check Status ---
@@ -171,11 +165,8 @@ elif choice == "Check Appointment Status":
             st.warning("Please enter a reference or phone number.")
         else:
             q = query.strip()
-            row = None
-            # try by booking_ref exact
             row = c.execute("SELECT id, patient_name, department, date, status, booking_ref, phone FROM appointments WHERE booking_ref=?", (q,)).fetchone()
             if not row:
-                # try by phone (could be multiple)
                 rows = c.execute("SELECT id, patient_name, department, date, status, booking_ref, phone FROM appointments WHERE phone LIKE ?", (f"%{q}%",)).fetchall()
                 if not rows:
                     st.error("No appointment found with that reference or phone.")
@@ -219,7 +210,6 @@ elif choice == "Staff Login":
 
         if not df.empty:
             for i, row in df.iterrows():
-                # row fields: id, patient_name, phone, department, doctor, date, status, created_at, updated_at, clinic_id, booking_ref
                 st.write(f"📌 {row['patient_name']} | {row['department']} | {row['date']} | Status: {row['status']} | Ref: {row.get('booking_ref', '')}")
                 cols = st.columns([1,1,1])
                 with cols[0]:
@@ -229,7 +219,7 @@ elif choice == "Staff Login":
                         conn.commit()
                         send_sms(row['phone'], f"Your appointment ({row.get('booking_ref','')}) is confirmed for {row['date']}.")
                         st.success(f"✅ Confirmed appointment {row['id']}")
-                        st.experimental_rerun()
+                        st.rerun()   # fixed
                 with cols[1]:
                     if st.button("Cancel", key=f"cancel{row['id']}"):
                         c.execute("UPDATE appointments SET status=?, updated_at=? WHERE id=?",
@@ -237,13 +227,12 @@ elif choice == "Staff Login":
                         conn.commit()
                         send_sms(row['phone'], f"Your appointment ({row.get('booking_ref','')}) has been cancelled.")
                         st.warning(f"❌ Cancelled appointment {row['id']}")
-                        st.experimental_rerun()
+                        st.rerun()   # fixed
                 with cols[2]:
                     st.write("")  # reserved for future actions
         else:
             st.info("No appointments yet.")
 
-        # Analytics only for admin
         if role == "admin":
             st.subheader("📊 Analytics Dashboard")
             if not df.empty:
@@ -253,3 +242,4 @@ elif choice == "Staff Login":
                 st.plotly_chart(fig2)
             else:
                 st.info("No data for analytics yet.")
+
