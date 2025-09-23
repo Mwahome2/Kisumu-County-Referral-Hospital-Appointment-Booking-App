@@ -12,6 +12,7 @@ from twilio.rest import Client
 # ==========================
 DB_PATH = "kisumu_hospital.db"
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+conn.row_factory = sqlite3.Row  # <-- allows dictionary-style access
 c = conn.cursor()
 
 # --- Base tables ---
@@ -33,10 +34,13 @@ c.execute('''CREATE TABLE IF NOT EXISTS appointments
               created_at TEXT,
               updated_at TEXT,
               clinic_id INTEGER,
-              booking_ref TEXT)''')
+              booking_ref TEXT,
+              telemedicine_link TEXT,
+              notification_sent INTEGER DEFAULT 0,
+              insurance_verified INTEGER DEFAULT 0)''')
 conn.commit()
 
-# --- Function to safely add new columns ---
+# --- Ensure columns exist (for older DBs) ---
 def ensure_column_exists(table, column_name, column_def):
     info = c.execute(f"PRAGMA table_info({table})").fetchall()
     columns = [row[1] for row in info]
@@ -44,7 +48,6 @@ def ensure_column_exists(table, column_name, column_def):
         c.execute(f"ALTER TABLE {table} ADD COLUMN {column_name} {column_def}")
         conn.commit()
 
-# --- Ensure all new columns exist ---
 ensure_column_exists("appointments", "telemedicine_link", "TEXT")
 ensure_column_exists("appointments", "notification_sent", "INTEGER DEFAULT 0")
 ensure_column_exists("appointments", "insurance_verified", "INTEGER DEFAULT 0")
@@ -107,7 +110,7 @@ st.session_state["language"] = st.sidebar.selectbox(
     "Choose Language / Chagua Lugha", ["en", "sw"], index=0
 )
 lang = st.session_state["language"]
-t = languages[lang]  # shorthand
+t = languages[lang]
 
 # ==========================
 # --- HELPER FUNCTIONS ---
@@ -171,8 +174,8 @@ def manual_login():
         if row:
             st.session_state["logged_in"] = True
             st.session_state["username"] = uname
-            st.session_state["role"] = row[0]
-            st.success(f"✅ Logged in as {uname} ({row[0]})")
+            st.session_state["role"] = row["role"]
+            st.success(f"✅ Logged in as {uname} ({row['role']})")
             st.rerun()
         else:
             st.error("Username/Password is incorrect")
@@ -197,12 +200,10 @@ def insert_appointment(patient_name, phone, department, doctor, appt_date, clini
     appt_id = c.lastrowid
     ref = generate_booking_ref(appt_id)
     tele_link = f"https://telemed.example.com/{ref}"
-    insurance_verified = 0
-    notification_sent = 0
     c.execute("""UPDATE appointments 
-                 SET booking_ref=?, telemedicine_link=?, insurance_verified=?, notification_sent=?, updated_at=? 
+                 SET booking_ref=?, telemedicine_link=?, updated_at=? 
                  WHERE id=?""",
-              (ref, tele_link, insurance_verified, notification_sent, created_at, appt_id))
+              (ref, tele_link, created_at, appt_id))
     conn.commit()
     msg = f"Hello {patient_name}, your appointment for {appt_date} is received. Reference: {ref}. Telemedicine link: {tele_link}"
     send_notification(phone, msg)
@@ -246,49 +247,10 @@ elif menu_choice == t["menu"][1]:
             q = query.strip()
             row = c.execute("SELECT * FROM appointments WHERE booking_ref=? OR phone LIKE ?", (q, f"%{q}%")).fetchone()
             if row:
-                st.success(f"👤 Patient: {row[1]}")
+                st.success(f"👤 Patient: {row['patient_name']}")
                 st.info(f"🏥 Dept: {row['department']} | 📅 Date: {row['date']} | Ref: {row['booking_ref']} | Telemedicine: {row['telemedicine_link']}")
                 status_text = {"pending": t["status_pending"], "confirmed": t["status_confirmed"], "cancelled": t["status_cancelled"]}
                 st.info(status_text.get(row["status"], row["status"]))
             else:
                 st.error(t["no_appt_found"])
 
-# --- STAFF SIDE: QUEUE & ANALYTICS ---
-elif menu_choice == t["menu"][2]:
-    if not st.session_state["logged_in"]:
-        manual_login()
-    else:
-        manual_logout()
-        role = st.session_state["role"]
-        st.subheader(t["staff_manage"])
-        df = pd.read_sql("SELECT * FROM appointments ORDER BY created_at DESC", conn)
-        if not df.empty:
-            for i, row in df.iterrows():
-                st.write(f"📌 {row['patient_name']} | {row['department']} | {row['date']} | Status: {row['status']} | Ref: {row['booking_ref']}")
-                cols = st.columns([1,1,1])
-                with cols[0]:
-                    if st.button("Confirm", key=f"confirm{row['id']}"):
-                        c.execute("UPDATE appointments SET status=?, updated_at=? WHERE id=?",
-                                  ("confirmed", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), row['id']))
-                        conn.commit()
-                        send_notification(row['phone'], f"Your appointment ({row['booking_ref']}) is confirmed for {row['date']}.")
-                        st.rerun()
-                with cols[1]:
-                    if st.button("Cancel", key=f"cancel{row['id']}"):
-                        c.execute("UPDATE appointments SET status=?, updated_at=? WHERE id=?",
-                                  ("cancelled", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), row['id']))
-                        conn.commit()
-                        send_notification(row['phone'], f"Your appointment ({row['booking_ref']}) has been cancelled.")
-                        st.rerun()
-        else:
-            st.info("No appointments yet.")
-
-        if role == "admin":
-            st.subheader(t["analytics"])
-            if not df.empty:
-                fig = px.histogram(df, x="department", color="status", title="Appointments by Department")
-                st.plotly_chart(fig)
-                fig2 = px.histogram(df, x="date", color="status", title="Appointments over Time")
-                st.plotly_chart(fig2)
-            else:
-                st.info("No data for analytics yet.")
