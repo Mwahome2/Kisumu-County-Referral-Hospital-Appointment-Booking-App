@@ -53,7 +53,10 @@ authenticator = stauth.Authenticate(
     credentials, "kisumu_app", "abcdef", cookie_expiry_days=1
 )
 
-name, authentication_status, username = authenticator.login("Login", "main")
+name, authentication_status, username = authenticator.login(
+    fields={'Form name': 'Login'},
+    location='main'
+)
 
 # --- Twilio Setup from Secrets ---
 account_sid = st.secrets.get("TWILIO_ACCOUNT_SID")
