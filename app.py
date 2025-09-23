@@ -14,7 +14,7 @@ DB_PATH = "kisumu_hospital.db"
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 c = conn.cursor()
 
-# --- Tables for users & appointments (existing) ---
+# --- Base tables ---
 c.execute('''CREATE TABLE IF NOT EXISTS users
              (id INTEGER PRIMARY KEY AUTOINCREMENT,
               username TEXT UNIQUE,
@@ -33,11 +33,81 @@ c.execute('''CREATE TABLE IF NOT EXISTS appointments
               created_at TEXT,
               updated_at TEXT,
               clinic_id INTEGER,
-              booking_ref TEXT,
-              notification_sent INTEGER DEFAULT 0,
-              telemedicine_link TEXT,
-              insurance_verified INTEGER DEFAULT 0)''')
+              booking_ref TEXT)''')
 conn.commit()
+
+# --- Function to safely add new columns ---
+def ensure_column_exists(table, column_name, column_def):
+    info = c.execute(f"PRAGMA table_info({table})").fetchall()
+    columns = [row[1] for row in info]
+    if column_name not in columns:
+        c.execute(f"ALTER TABLE {table} ADD COLUMN {column_name} {column_def}")
+        conn.commit()
+
+# --- Ensure all new columns exist ---
+ensure_column_exists("appointments", "telemedicine_link", "TEXT")
+ensure_column_exists("appointments", "notification_sent", "INTEGER DEFAULT 0")
+ensure_column_exists("appointments", "insurance_verified", "INTEGER DEFAULT 0")
+ensure_column_exists("appointments", "clinic_id", "INTEGER DEFAULT 1")
+ensure_column_exists("appointments", "booking_ref", "TEXT")
+
+# ==========================
+# --- MULTI-LANGUAGE SUPPORT ---
+# ==========================
+languages = {
+    "en": {
+        "title": "🏥 Kisumu County Referral Hospital",
+        "menu": ["Book Appointment", "Check Appointment Status", "Staff Login"],
+        "patient_booking": "📌 Patient Appointment Booking",
+        "patient_name": "Patient Name",
+        "phone_number": "Phone Number",
+        "department": "Department",
+        "doctor": "Doctor (optional)",
+        "preferred_date": "Preferred Date",
+        "book_btn": "Book Appointment",
+        "booking_success": "✅ Appointment booked for {name} on {date}",
+        "booking_ref": "📌 Your Booking Reference: {ref}",
+        "telemedicine": "💻 Telemedicine link (if applicable): {link}",
+        "check_status": "🔍 Check Appointment Status",
+        "enter_ref_phone": "Enter your booking reference or phone number",
+        "no_appt_found": "No appointment found.",
+        "status_pending": "⏳ Status: Pending (waiting for confirmation)",
+        "status_confirmed": "✅ Status: Confirmed",
+        "status_cancelled": "❌ Status: Cancelled",
+        "staff_manage": "📋 Manage Appointments (Queue)",
+        "analytics": "📊 Analytics Dashboard"
+    },
+    "sw": {
+        "title": "🏥 Hospitali Kuu ya Rufaa ya Kaunti ya Kisumu",
+        "menu": ["Weka Miadi", "Angalia Hali ya Miadi", "Ingia Staff"],
+        "patient_booking": "📌 Weka Miadi ya Mgonjwa",
+        "patient_name": "Jina la Mgonjwa",
+        "phone_number": "Namba ya Simu",
+        "department": "Idara",
+        "doctor": "Daktari (hiari)",
+        "preferred_date": "Tarehe Uliyoipendelea",
+        "book_btn": "Weka Miadi",
+        "booking_success": "✅ Miadi imewekwa kwa {name} mnamo {date}",
+        "booking_ref": "📌 Kumbukumbu ya Miadi Yako: {ref}",
+        "telemedicine": "💻 Kiungo cha Telemedicine (ikiwa kinapatikana): {link}",
+        "check_status": "🔍 Angalia Hali ya Miadi",
+        "enter_ref_phone": "Weka kumbukumbu ya miadi au namba ya simu",
+        "no_appt_found": "Hakuna miadi iliyopatikana.",
+        "status_pending": "⏳ Hali: Inasubiri uthibitisho",
+        "status_confirmed": "✅ Hali: Imethibitishwa",
+        "status_cancelled": "❌ Hali: Imefutwa",
+        "staff_manage": "📋 Dhibiti Miadi (Orodha ya Wateja)",
+        "analytics": "📊 Dashibodi ya Takwimu"
+    }
+}
+
+# Sidebar language selector
+st.sidebar.title("🌐 Language / Lugha")
+st.session_state["language"] = st.sidebar.selectbox(
+    "Choose Language / Chagua Lugha", ["en", "sw"], index=0
+)
+lang = st.session_state["language"]
+t = languages[lang]  # shorthand
 
 # ==========================
 # --- HELPER FUNCTIONS ---
@@ -59,7 +129,6 @@ except Exception:
     twilio_number = os.getenv("TWILIO_PHONE", "")
 
 def send_notification(phone, msg):
-    """Send SMS/WhatsApp if configured"""
     if account_sid and auth_token and twilio_number:
         client = Client(account_sid, auth_token)
         try:
@@ -73,13 +142,21 @@ def send_notification(phone, msg):
         st.info(f"ℹ️ Simulated notification:\nTo: {phone}\nMessage: {msg}")
 
 # ==========================
+# --- ADMIN CHECK ---
+# ==========================
+admin_check = c.execute("SELECT * FROM users WHERE username=?", ("admin",)).fetchone()
+if not admin_check:
+    c.execute("INSERT INTO users (username, password_hash, role, department) VALUES (?, ?, ?, ?)",
+              ("admin", hash_password("admin123"), "admin", "ALL"))
+    conn.commit()
+
+# ==========================
 # --- SESSION STATE ---
 # ==========================
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
     st.session_state["username"] = None
     st.session_state["role"] = None
-    st.session_state["language"] = "en"  # Multi-language support placeholder
 
 # ==========================
 # --- AUTHENTICATION ---
@@ -111,7 +188,6 @@ def manual_logout():
 # --- APPOINTMENT INSERTION ---
 # ==========================
 def insert_appointment(patient_name, phone, department, doctor, appt_date, clinic_id=1):
-    """Insert appointment and generate booking ref + optional telemedicine"""
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     c.execute("""INSERT INTO appointments 
                  (patient_name, phone, department, doctor, date, status, created_at, updated_at, clinic_id) 
@@ -120,48 +196,49 @@ def insert_appointment(patient_name, phone, department, doctor, appt_date, clini
     conn.commit()
     appt_id = c.lastrowid
     ref = generate_booking_ref(appt_id)
-    tele_link = f"https://telemed.example.com/{ref}"  # Placeholder for telemedicine
-    c.execute("UPDATE appointments SET booking_ref=?, telemedicine_link=? WHERE id=?", (ref, tele_link, appt_id))
+    tele_link = f"https://telemed.example.com/{ref}"
+    insurance_verified = 0
+    notification_sent = 0
+    c.execute("""UPDATE appointments 
+                 SET booking_ref=?, telemedicine_link=?, insurance_verified=?, notification_sent=?, updated_at=? 
+                 WHERE id=?""",
+              (ref, tele_link, insurance_verified, notification_sent, created_at, appt_id))
+    conn.commit()
+    msg = f"Hello {patient_name}, your appointment for {appt_date} is received. Reference: {ref}. Telemedicine link: {tele_link}"
+    send_notification(phone, msg)
+    c.execute("UPDATE appointments SET notification_sent=? WHERE id=?", (1, appt_id))
     conn.commit()
     return appt_id, ref, tele_link
 
 # ==========================
 # --- APP LAYOUT ---
 # ==========================
-st.title("🏥 Kisumu County Referral Hospital")
+st.title(t["title"])
+menu_choice = st.sidebar.selectbox("Menu", t["menu"])
 
-menu = ["Book Appointment", "Check Appointment Status", "Staff Login"]
-choice = st.sidebar.selectbox("Menu", menu)
-
-# --------------------------
 # --- PATIENT SIDE: BOOKING ---
-# --------------------------
-if choice == "Book Appointment":
-    st.subheader("📌 Patient Appointment Booking")
+if menu_choice == t["menu"][0]:
+    st.subheader(t["patient_booking"])
     with st.form("booking_form"):
-        patient_name = st.text_input("Patient Name")
-        phone = st.text_input("Phone Number")
-        department = st.selectbox("Department", ["OPD", "MCH/FP", "Dental", "Surgery", "Orthopedics", "Eye"])
-        doctor = st.text_input("Doctor (optional)")
-        date_ = st.date_input("Preferred Date", min_value=date.today())
-        submit = st.form_submit_button("Book Appointment")
-
+        patient_name = st.text_input(t["patient_name"])
+        phone = st.text_input(t["phone_number"])
+        department = st.selectbox(t["department"], ["OPD", "MCH/FP", "Dental", "Surgery", "Orthopedics", "Eye"])
+        doctor = st.text_input(t["doctor"])
+        date_ = st.date_input(t["preferred_date"], min_value=date.today())
+        submit = st.form_submit_button(t["book_btn"])
         if submit:
             if not patient_name.strip() or not phone.strip():
                 st.warning("Please fill all required fields.")
             else:
                 appt_id, ref, tele_link = insert_appointment(patient_name.strip(), phone.strip(), department, doctor.strip(), date_)
-                st.success(f"✅ Appointment booked for {patient_name} on {date_}")
-                st.info(f"📌 Your Booking Reference: **{ref}**")
-                st.info(f"💻 Telemedicine link (if applicable): {tele_link}")
-                send_notification(phone.strip(), f"Hello {patient_name}, your appointment for {date_} is received. Ref: {ref}")
+                st.success(t["booking_success"].format(name=patient_name, date=date_))
+                st.info(t["booking_ref"].format(ref=ref))
+                st.info(t["telemedicine"].format(link=tele_link))
 
-# --------------------------
 # --- PATIENT SIDE: STATUS ---
-# --------------------------
-elif choice == "Check Appointment Status":
-    st.subheader("🔍 Check Appointment Status")
-    query = st.text_input("Reference or phone")
+elif menu_choice == t["menu"][1]:
+    st.subheader(t["check_status"])
+    query = st.text_input(t["enter_ref_phone"])
     if st.button("Check Status"):
         if not query.strip():
             st.warning("Please enter a reference or phone number.")
@@ -170,21 +247,20 @@ elif choice == "Check Appointment Status":
             row = c.execute("SELECT * FROM appointments WHERE booking_ref=? OR phone LIKE ?", (q, f"%{q}%")).fetchone()
             if row:
                 st.success(f"👤 Patient: {row[1]}")
-                st.info(f"🏥 Dept: {row[3]} | 📅 Date: {row[5]} | Ref: {row[10]} | Telemedicine: {row[13]}")
-                st.info(f"Status: {row[6]}")
+                st.info(f"🏥 Dept: {row['department']} | 📅 Date: {row['date']} | Ref: {row['booking_ref']} | Telemedicine: {row['telemedicine_link']}")
+                status_text = {"pending": t["status_pending"], "confirmed": t["status_confirmed"], "cancelled": t["status_cancelled"]}
+                st.info(status_text.get(row["status"], row["status"]))
             else:
-                st.error("No appointment found.")
+                st.error(t["no_appt_found"])
 
-# --------------------------
 # --- STAFF SIDE: QUEUE & ANALYTICS ---
-# --------------------------
-elif choice == "Staff Login":
+elif menu_choice == t["menu"][2]:
     if not st.session_state["logged_in"]:
         manual_login()
     else:
         manual_logout()
         role = st.session_state["role"]
-        st.subheader("📋 Manage Appointments (Queue)")
+        st.subheader(t["staff_manage"])
         df = pd.read_sql("SELECT * FROM appointments ORDER BY created_at DESC", conn)
         if not df.empty:
             for i, row in df.iterrows():
@@ -208,7 +284,7 @@ elif choice == "Staff Login":
             st.info("No appointments yet.")
 
         if role == "admin":
-            st.subheader("📊 Analytics Dashboard")
+            st.subheader(t["analytics"])
             if not df.empty:
                 fig = px.histogram(df, x="department", color="status", title="Appointments by Department")
                 st.plotly_chart(fig)
@@ -216,15 +292,3 @@ elif choice == "Staff Login":
                 st.plotly_chart(fig2)
             else:
                 st.info("No data for analytics yet.")
-
-# ==========================
-# --- FUTURE FEATURES PLACEHOLDERS ---
-# ==========================
-"""
-1️⃣ Real-time database: Replace SQLite with PostgreSQL or Firebase for live updates.
-2️⃣ Multi-language support: Integrate i18n for patient-facing UI.
-3️⃣ EHR integration: Use FHIR/HL7 APIs to sync patient records automatically.
-4️⃣ Telemedicine: Integrate video consultation APIs.
-5️⃣ Insurance: API or admin input for coverage verification and co-pay automation.
-6️⃣ Notifications: Push notifications (Firebase) alongside SMS/WhatsApp.
-"""
