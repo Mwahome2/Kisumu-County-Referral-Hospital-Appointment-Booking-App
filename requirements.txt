@@ -4,5 +4,4 @@ plotly==5.22.0
 streamlit-authenticator==0.3.2
 bcrypt==4.1.2
 twilio==9.0.5
-seaborn==0.13.2
 
