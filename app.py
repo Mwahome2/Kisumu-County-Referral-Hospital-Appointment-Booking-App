@@ -183,7 +183,7 @@ def manual_login():
             st.session_state["username"] = uname
             st.session_state["role"] = row["role"]
             st.success(f"✅ Logged in as {uname} ({row['role']})")
-            st.rerun()
+            st.experimental_rerun = lambda: None  # disable old rerun
         else:
             st.error("Username/Password is incorrect")
 
@@ -192,7 +192,7 @@ def manual_logout():
         st.session_state["logged_in"] = False
         st.session_state["username"] = None
         st.session_state["role"] = None
-        st.rerun()
+        st.experimental_rerun = lambda: None
 
 # ==========================
 # --- APPOINTMENT INSERTION ---
@@ -267,10 +267,12 @@ elif menu_choice == t["menu"][2]:
         manual_login()
     else:
         manual_logout()
-        df = pd.read_sql("SELECT * FROM appointments ORDER BY created_at DESC", conn)
+        def load_appointments():
+            return pd.read_sql("SELECT * FROM appointments ORDER BY created_at DESC", conn)
+
+        df = load_appointments()
         st.subheader(t["staff_manage"])
         if not df.empty:
-            rerun_flag = False
             for i, row in df.iterrows():
                 st.write(f"📌 {row['patient_name']} | {row['department']} | {row['date']} | Status: {row['status']} | Stage: {row['stage']} | Ref: {row['booking_ref']}")
                 cols = st.columns([1,1,1])
@@ -281,7 +283,7 @@ elif menu_choice == t["menu"][2]:
                         conn.commit()
                         send_notification(row['phone'], f"Your appointment ({row['booking_ref']}) is confirmed for {row['date']}")
                         st.success(f"✅ Confirmed appointment {row['id']}")
-                        rerun_flag = True
+                        df = load_appointments()
                 with cols[1]:
                     if st.button("Cancel", key=f"cancel{row['id']}"):
                         c.execute("UPDATE appointments SET status=?, stage=?, updated_at=? WHERE id=?",
@@ -289,7 +291,7 @@ elif menu_choice == t["menu"][2]:
                         conn.commit()
                         send_notification(row['phone'], f"Your appointment ({row['booking_ref']}) has been cancelled.")
                         st.warning(f"❌ Cancelled appointment {row['id']}")
-                        rerun_flag = True
+                        df = load_appointments()
                 with cols[2]:
                     new_stage = st.selectbox(t["update_stage"], t["stages"], index=t["stages"].index(row['stage']), key=f"stage{row['id']}")
                     if st.button(f"Update Stage", key=f"updatestage{row['id']}"):
@@ -297,8 +299,5 @@ elif menu_choice == t["menu"][2]:
                                   (new_stage, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), row['id']))
                         conn.commit()
                         st.success(f"✅ Updated stage for {row['patient_name']} to {new_stage}")
-                        rerun_flag = True
-            if rerun_flag:
-                st.experimental_rerun()
-
+                        df = load_appointments()
 
