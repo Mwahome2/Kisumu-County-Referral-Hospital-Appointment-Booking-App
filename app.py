@@ -2,7 +2,7 @@ import os
 import streamlit as st
 import sqlite3
 import pandas as pd
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import plotly.express as px
 import hashlib
 from twilio.rest import Client
@@ -183,7 +183,7 @@ def manual_login():
             st.session_state["username"] = uname
             st.session_state["role"] = row["role"]
             st.success(f"✅ Logged in as {uname} ({row['role']})")
-            st.experimental_rerun = lambda: None  # disable old rerun
+            st.experimental_rerun()
         else:
             st.error("Username/Password is incorrect")
 
@@ -192,7 +192,7 @@ def manual_logout():
         st.session_state["logged_in"] = False
         st.session_state["username"] = None
         st.session_state["role"] = None
-        st.experimental_rerun = lambda: None
+        st.experimental_rerun()
 
 # ==========================
 # --- APPOINTMENT INSERTION ---
@@ -261,43 +261,86 @@ elif menu_choice == t["menu"][1]:
             else:
                 st.error(t["no_appt_found"])
 
-# --- STAFF / ADMIN ---
+# --- STAFF / ADMIN DASHBOARD ---
 elif menu_choice == t["menu"][2]:
     if not st.session_state["logged_in"]:
         manual_login()
     else:
         manual_logout()
-        def load_appointments():
-            return pd.read_sql("SELECT * FROM appointments ORDER BY created_at DESC", conn)
+        st.subheader(f"👤 Welcome, {st.session_state['username']}")
+        df = pd.read_sql("SELECT * FROM appointments ORDER BY created_at DESC", conn)
 
-        df = load_appointments()
-        st.subheader(t["staff_manage"])
-        if not df.empty:
-            for i, row in df.iterrows():
-                st.write(f"📌 {row['patient_name']} | {row['department']} | {row['date']} | Status: {row['status']} | Stage: {row['stage']} | Ref: {row['booking_ref']}")
-                cols = st.columns([1,1,1])
-                with cols[0]:
-                    if st.button("Confirm", key=f"confirm{row['id']}"):
-                        c.execute("UPDATE appointments SET status=?, stage=?, updated_at=? WHERE id=?",
-                                  ("confirmed", "confirmed", datetime.now().strftime('%Y-%m-%d %H:%M:%S'), row['id']))
-                        conn.commit()
-                        send_notification(row['phone'], f"Your appointment ({row['booking_ref']}) is confirmed for {row['date']}")
-                        st.success(f"✅ Confirmed appointment {row['id']}")
-                        df = load_appointments()
-                with cols[1]:
-                    if st.button("Cancel", key=f"cancel{row['id']}"):
-                        c.execute("UPDATE appointments SET status=?, stage=?, updated_at=? WHERE id=?",
-                                  ("cancelled", "cancelled", datetime.now().strftime('%Y-%m-%d %H:%M:%S'), row['id']))
-                        conn.commit()
-                        send_notification(row['phone'], f"Your appointment ({row['booking_ref']}) has been cancelled.")
-                        st.warning(f"❌ Cancelled appointment {row['id']}")
-                        df = load_appointments()
-                with cols[2]:
-                    new_stage = st.selectbox(t["update_stage"], t["stages"], index=t["stages"].index(row['stage']), key=f"stage{row['id']}")
-                    if st.button(f"Update Stage", key=f"updatestage{row['id']}"):
-                        c.execute("UPDATE appointments SET stage=?, updated_at=? WHERE id=?",
-                                  (new_stage, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), row['id']))
-                        conn.commit()
-                        st.success(f"✅ Updated stage for {row['patient_name']} to {new_stage}")
-                        df = load_appointments()
+        # Staff Panel Menu
+        staff_menu = st.sidebar.radio("Staff Panel", ["Manage Appointments", "Analytics", "Search / Filter", "Export Data"])
+
+        if staff_menu == "Manage Appointments":
+            st.subheader("📋 Manage Appointments (Queue)")
+            if not df.empty:
+                rerun_flag = False
+                for i, row in df.iterrows():
+                    st.write(f"📌 {row['patient_name']} | {row['department']} | {row['date']} | Status: {row['status']} | Stage: {row['stage']} | Ref: {row['booking_ref']}")
+                    cols = st.columns([1,1,1])
+                    with cols[0]:
+                        if st.button("Confirm", key=f"confirm{row['id']}"):
+                            c.execute("UPDATE appointments SET status=?, stage=?, updated_at=? WHERE id=?",
+                                      ("confirmed", "confirmed", datetime.now().strftime('%Y-%m-%d %H:%M:%S'), row['id']))
+                            conn.commit()
+                            send_notification(row['phone'], f"Your appointment ({row['booking_ref']}) is confirmed for {row['date']}")
+                            st.success(f"✅ Confirmed appointment {row['id']}")
+                            rerun_flag = True
+                    with cols[1]:
+                        if st.button("Cancel", key=f"cancel{row['id']}"):
+                            c.execute("UPDATE appointments SET status=?, stage=?, updated_at=? WHERE id=?",
+                                      ("cancelled", "cancelled", datetime.now().strftime('%Y-%m-%d %H:%M:%S'), row['id']))
+                            conn.commit()
+                            send_notification(row['phone'], f"Your appointment ({row['booking_ref']}) has been cancelled.")
+                            st.warning(f"❌ Cancelled appointment {row['id']}")
+                            rerun_flag = True
+                    with cols[2]:
+                        new_stage = st.selectbox(t["update_stage"], t["stages"], index=t["stages"].index(row['stage']), key=f"stage{row['id']}")
+                        if st.button(f"Update Stage", key=f"updatestage{row['id']}"):
+                            c.execute("UPDATE appointments SET stage=?, updated_at=? WHERE id=?",
+                                      (new_stage, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), row['id']))
+                            conn.commit()
+                            st.success(f"✅ Updated stage for {row['patient_name']} to {new_stage}")
+                            rerun_flag = True
+                if rerun_flag:
+                    st.experimental_rerun()
+
+        elif staff_menu == "Analytics":
+            st.subheader("📊 Analytics Dashboard")
+            today = date.today()
+            week_start = today - timedelta(days=today.weekday())
+            month_start = today.replace(day=1)
+            
+            df['date_dt'] = pd.to_datetime(df['date'])
+            total_today = len(df[df['date_dt'].dt.date == today])
+            total_week = len(df[(df['date_dt'].dt.date >= week_start) & (df['date_dt'].dt.date <= today)])
+            total_month = len(df[(df['date_dt'].dt.date >= month_start) & (df['date_dt'].dt.date <= today)])
+            
+            st.info(f"Total Appointments Today: {total_today}")
+            st.info(f"Total Appointments This Week: {total_week}")
+            st.info(f"Total Appointments This Month: {total_month}")
+            
+            st.info(f"Pending: {len(df[df['status']=='pending'])} | Confirmed: {len(df[df['status']=='confirmed'])} | Cancelled: {len(df[df['status']=='cancelled'])}")
+            
+            st.bar_chart(df['department'].value_counts())
+            st.bar_chart(df['stage'].value_counts())
+
+        elif staff_menu == "Search / Filter":
+            st.subheader("🔍 Search / Filter Appointments")
+            dept_filter = st.selectbox("Department", ["All"] + df['department'].unique().tolist())
+            status_filter = st.selectbox("Status", ["All", "pending", "confirmed", "cancelled"])
+            filtered = df
+            if dept_filter != "All":
+                filtered = filtered[filtered['department'] == dept_filter]
+            if status_filter != "All":
+                filtered = filtered[filtered['status'] == status_filter]
+            st.dataframe(filtered)
+
+        elif staff_menu == "Export Data":
+            st.subheader("💾 Export Appointments Data")
+            csv = df.to_csv(index=False).encode('utf-8')
+            st.download_button("Download CSV", data=csv, file_name='appointments.csv', mime='text/csv')
+
 
