@@ -343,4 +343,3 @@ elif menu_choice == t["menu"][2]:
             csv = df.to_csv(index=False).encode('utf-8')
             st.download_button("Download CSV", data=csv, file_name='appointments.csv', mime='text/csv')
 
-
