@@ -544,9 +544,39 @@ elif menu_choice == t["menu"][2]:
             if now_id:
                 current = c.execute("SELECT * FROM appointments WHERE id=?", (now_id,)).fetchone()
                 if current:
+                    # ---- START: SAFE HANDLING FOR `current` (fixed) ----
+                    try:
+                        # Try converting sqlite3.Row (or similar) to dict
+                        rowd = dict(current)
+                    except Exception:
+                        try:
+                            # pandas Series fallback
+                            rowd = current.to_dict()
+                        except Exception:
+                            # last resort: attempt key access and build dict
+                            rowd = {}
+                            try:
+                                # sqlite3.Row supports keys() in many envs
+                                for k in current.keys():
+                                    rowd[k] = current[k]
+                            except Exception:
+                                # give up and present minimal info
+                                rowd = {}
+
+                    # Use .get safely for all fields
+                    patient_name_disp = rowd.get('patient_name', 'N/A')
+                    department_disp = rowd.get('department', 'N/A')
+                    date_disp = rowd.get('date', '')
+                    time_disp = rowd.get('time', '')
+                    booking_ref_disp = rowd.get('booking_ref', 'N/A')
+                    stage_disp = rowd.get('stage', 'N/A')
+                    ticket_disp = rowd.get('ticket_number', 'N/A')
+
                     cols_now = st.columns([3,1,1,1])
                     with cols_now[0]:
-                        st.write(f"📌 {current['patient_name']} | {current['department']} | {current['date']} {current['time']} | Ref: {current['booking_ref']} | Stage: {current['stage']} | Ticket: {current.get('ticket_number')}")
+                        st.write(f"📌 {patient_name_disp} | {department_disp} | {date_disp} {time_disp} | Ref: {booking_ref_disp} | Stage: {stage_disp} | Ticket: {ticket_disp}")
+                    # ---- END: SAFE HANDLING FOR `current` ----
+
                     with cols_now[1]:
                         if st.button(t["next_patient"], key=f"now_next_{now_id}"):
                             update_appointment_field(now_id, "stage", "done")
@@ -560,7 +590,19 @@ elif menu_choice == t["menu"][2]:
                             st.rerun()
                     with cols_now[3]:
                         if st.button(t["recall_patient"], key=f"now_recall_{now_id}"):
-                            send_notification(current['phone'], f"Hello {current['patient_name']}, please proceed to the clinic. Ref: {current['booking_ref']}")
+                            # for recall we use direct current row data if available
+                            try:
+                                phone_to_call = rowd.get('phone', None) or current['phone']
+                            except Exception:
+                                phone_to_call = rowd.get('phone', None)
+                            if phone_to_call:
+                                send_notification(phone_to_call, f"Hello {patient_name_disp}, please proceed to the clinic. Ref: {booking_ref_disp}")
+                            else:
+                                # fallback: try to directly access
+                                try:
+                                    send_notification(current['phone'], f"Hello {patient_name_disp}, please proceed to the clinic. Ref: {booking_ref_disp}")
+                                except Exception:
+                                    st.warning("Unable to fetch phone to send recall.")
                             st.success("Recall/Reminder sent.")
             else:
                 st.info("No patients currently in queue.")
