@@ -55,7 +55,7 @@ async def api_book(request: Request):
 # ==========================
 # --- PAGE CONFIG (MUST BE FIRST) ---
 # ==========================
-st.set_page_config(page_title="🏥 Kisumu Hospital Appointments", layout="wide")
+st.set_page_config(page_title="🏥 Kisumu Hospital Appointments",page_icon=None , layout="wide")
 
 # ==========================
 # --- DATABASE SETUP ---
