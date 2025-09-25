@@ -8,7 +8,6 @@ import pandas as pd
 from datetime import datetime, date, timedelta, time as dtime
 import hashlib
 from twilio.rest import Client
-from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import threading
 import uvicorn
