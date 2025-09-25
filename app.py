@@ -8,6 +8,49 @@ import pandas as pd
 from datetime import datetime, date, timedelta, time as dtime
 import hashlib
 from twilio.rest import Client
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+import threading
+import uvicorn
+
+# ==========================
+# --- FASTAPI API ---
+# ==========================
+api = FastAPI()
+
+@api.post("/api/book")
+async def api_book(request: Request):
+    """
+    API to create an appointment booking.
+    Expects JSON: { "patient_name": "John Doe", "phone": "2547...", "department": "OPD", "doctor": "Dr. A", "date": "2025-09-28", "time": "09:00" }
+    """
+    try:
+        data = await request.json()
+        name = data.get("patient_name", "").strip()
+        phone = data.get("phone", "").strip()
+        dept = data.get("department", "").strip()
+        doctor = data.get("doctor", "").strip()
+        appt_date = data.get("date")
+        appt_time = data.get("time")
+
+        if not name or not phone or not dept or not appt_date or not appt_time:
+            return JSONResponse({"success": False, "error": "Missing required fields"}, status_code=400)
+
+        # Insert appointment using your existing helper
+        appt_id, ref, ticket, tele_link = insert_appointment(
+            name, phone, dept, doctor, appt_date, appt_time
+        )
+
+        return JSONResponse({
+            "success": True,
+            "appointment_id": appt_id,
+            "booking_ref": ref,
+            "ticket_number": ticket,
+            "telemedicine_link": tele_link
+        })
+
+    except Exception as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
 # ==========================
 # --- PAGE CONFIG (MUST BE FIRST) ---
@@ -714,6 +757,11 @@ elif menu_choice == t["menu"][2]:
             st.download_button(t["export_excel"], data=excel_data, file_name="appointments.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         except Exception:
             st.info("Excel export unavailable; CSV is provided.")
+def run_api():
+    uvicorn.run(api, host="0.0.0.0", port=8000)
+
+# Run FastAPI server in a background thread
+threading.Thread(target=run_api, daemon=True).start()
 
 # End of app.py
 
