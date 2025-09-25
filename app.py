@@ -183,7 +183,7 @@ def manual_login():
             st.session_state["username"] = uname
             st.session_state["role"] = row["role"]
             st.success(f"✅ Logged in as {uname} ({row['role']})")
-            st.experimental_rerun()
+            st.rerun()  # updated
         else:
             st.error("Username/Password is incorrect")
 
@@ -192,7 +192,7 @@ def manual_logout():
         st.session_state["logged_in"] = False
         st.session_state["username"] = None
         st.session_state["role"] = None
-        st.experimental_rerun()
+        st.rerun()  # updated
 
 # ==========================
 # --- APPOINTMENT INSERTION ---
@@ -305,7 +305,7 @@ elif menu_choice == t["menu"][2]:
                             st.success(f"✅ Updated stage for {row['patient_name']} to {new_stage}")
                             rerun_flag = True
                 if rerun_flag:
-                    st.experimental_rerun()
+                    st.rerun()
 
         elif staff_menu == "Analytics":
             st.subheader("📊 Analytics Dashboard")
