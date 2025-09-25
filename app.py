@@ -12,7 +12,7 @@ from twilio.rest import Client
 # ==========================
 # --- PAGE CONFIG (MUST BE FIRST) ---
 # ==========================
-st.set_page_config(page_title="Kisumu Hospital Appointments", layout="wide")
+st.set_page_config(page_title="🏥 Kisumu Hospital Appointments", layout="wide")
 
 # ==========================
 # --- DATABASE SETUP ---
