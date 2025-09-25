@@ -3,8 +3,13 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 from datetime import datetime, date, timedelta
+import plotly.express as px
 import hashlib
 from twilio.rest import Client
+
+# ✅ Page config MUST be here
+st.set_page_config(page_title="Kisumu Hospital Appointments", layout="wide")
+
 
 # ==========================
 # --- CONFIG / DB SETUP ---
